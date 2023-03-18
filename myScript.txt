@@ -1,0 +1,129 @@
+//@author Daisy Elliott drelliott@eou.edu
+//@category Malware
+//@keybinding ctrl m
+//@menupath 
+//@toolbar 
+
+//This script is designed to identify vulnerable funcitons in a binary and sort them by family
+//in a Java ArrayList. Several scripts with similar uses can be found online, or this script 
+//can be tailored to individual needs by simply adding the function you are looking for to 
+//one of the lists. 
+
+import ghidra.app.script.GhidraScript;
+import ghidra.program.model.util.*;
+import ghidra.program.model.reloc.*;
+import ghidra.program.model.data.*;
+import ghidra.program.model.block.*;
+import ghidra.program.model.symbol.*;
+import ghidra.program.model.scalar.*;
+import ghidra.program.model.mem.*;
+import ghidra.program.model.listing.*;
+import ghidra.program.model.lang.*;
+import ghidra.program.model.pcode.*;
+import ghidra.program.model.address.*;
+
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.Iterator;
+
+public void funct(String name, List<Function> list){
+    //this function fetches program names, called on line 126 in run()
+    SymbolTable st = currentProgram.getSymbolTable();
+    SymbolIterator si = st.getSymbolIterator();
+
+    while (si.hasNext()) {
+        Symbol s = si.next();
+        if ((s.getSymbolType() == SymbolType.FUNCTION) && (!s.isExternal()) &&
+            (s.getName().equals(name))) {
+
+                list.add(getFunctionAt(s.getAddress()));
+        }
+        }
+}
+
+public void printing(Function dstFunc, String tag) {
+    //this function iterates through and prints the results of the search. 
+    String dstName = dstFunc.getName();
+    Address dstAddr = dstFunc.getEntryPoint();
+    Reference[] refs = getReferencesTo(dstAddr);
+
+    printf("%s called in \n", dstName);
+
+    for (int i = 0; i < refs.length; i++) {
+
+        if (refs[i].getReferenceType().isCall()) {
+            Address callAddr = refs[i].getFromAddress();
+            Function srcFunc = getFunctionContaining(callAddr);
+
+            if ((srcFunc != null) && (!srcFunc.isThunk())) {
+                // print call address and caller function
+                String srcName = srcFunc.getName();
+                long offset = callAddr.getOffset();
+                printf("\t0x%x in %s\n", offset, srcName);
+
+                // add pre comment tag at candidate point location
+                Listing listing = currentProgram.getListing();
+                CodeUnit codeUnit = listing.getCodeUnitAt(callAddr);
+                String cur = codeUnit.getComment(CodeUnit.PRE_COMMENT);
+                if (cur == null) {
+                    codeUnit.setComment(CodeUnit.PRE_COMMENT, tag);
+                } else {
+                    if (!cur.startsWith("")) {
+                        codeUnit.setComment(CodeUnit.PRE_COMMENT, tag + "\n" + cur);
+                    }
+                }
+            }
+        }
+    }
+	}
+
+public void run() throws Exception {
+    //list of functions to search for
+    //based on known vulnerablitites
+    //includes strcpy family, sprintf family, scanf family, + others
+    List<String> one = new ArrayList<>(List.of(
+        "strcpy", "_strcpy", "strcpyA", "strcpyW", "wcscpy", "_wcscpy", "_tcscpy", "mbscpy",
+        "_mbscpy", "StrCpy", "StrCpyA", "StrCpyW", "lstrcpy", "lstrcpyA", "lstrcpyW", "_tccpy",
+        "_mbccpy", "_ftcscpy","stpcpy", "wcpcpy" 
+    ));
+
+    List<String> two = new ArrayList<>(List.of(
+        "sprintf", "_sprintf", "_sprintf_c89", "vsprintf", "_vsprintf", "_vsprintf_c89", "_wsprintfA",
+         "_wsprintfW", "sprintfW", "sprintfA", "wsprintf", "_wsprintf", "wsprintfW", "_wsprintfW",
+          "wsprintfA", "_wsprintfA", "_stprintf", "wvsprintf", "wvsprintfA", "wvsprintfW", "_vstprintf"
+    ));
+
+    List<String> three = new ArrayList<>(List.of(
+        "scanf", "_scanf", "__isoc99_sscanf", "wscanf", "_tscanf", "sscanf", "_sscanf", "_sscanf_c89",
+        "fscanf", "_fscanf", "__isoc99_fscanf", "vfscanf", "_vfscanf", "fwscanf", "swscanf", "_stscanf",
+        "snscanf","_snscanf", "snwscanf", "_snwscanf", "_sntscanf", "vsscanf", "_vsscanf","vscanf",
+        "_vscanf", "vfwscanf", "_vfwscanf", "vswscanf", "_vswscanf", "vwscanf", "_vwscanf"
+    ));
+
+    List<String> four = new ArrayList<>(List.of(
+         "gets", "_gets", "rand", "rand_r", "srand"
+    ));
+
+
+///////////////////////////////////////////////////////////////////////
+    List<Function> funcs = new ArrayList<>();
+
+    //array list to organize calls
+    Map<String, List<String>> vuln = new LinkedHashMap<>();
+    vuln.put("strcpy", one);
+    vuln.put("sprintf", two);
+    vuln.put("scanf", three);
+    vuln.put("other", four);
+
+    //iterator to search functions and populate list array
+    Iterator<Map.Entry<String, List<String>>> i = vuln.entrySet().iterator();
+		while (i.hasNext()) {
+			funcs.clear();
+			Map.Entry<String, List<String>> entry = i.next();
+			printf("\n%s\n\n", entry.getKey());
+			entry.getValue().forEach(s -> funct(s, funcs));
+			funcs.forEach(f -> printing(f, entry.getKey() + " " + f.getName()));
+        }
+}
